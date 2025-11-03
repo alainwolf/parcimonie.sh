@@ -211,7 +211,7 @@ getPublicKeys() {
 # New function to get email addresses for a key fingerprint
 getKeyEmails() {
     local fingerprint="$1"
-    nontor_gnupg --list-public-keys --with-colons "$fingerprint" | \
+    nontor_gnupg --list-public-keys --with-colons "${fingerprint}" | \
         grep '^uid:' | \
         sedExtRegexp 's/^uid:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:([^:]*):.*$/\1/' | \
         sedExtRegexp 's/.*<([^>]+)>.*/\1/' | \
@@ -220,40 +220,46 @@ getKeyEmails() {
 
 # New function to refresh key via WKD
 refreshKeyViaWkd() {
-    local fingerprint="$1"
-    local email
+	local fingerprint="$1"
+	local email
+	local emails
 
-    email="$(getKeyEmails "$fingerprint" | head -n 1)"
-    if [ -z "$email" ]; then
-        return 1
-    fi
+	emails="$(getKeyEmails "${fingerprint}")" || return 1
+	email="$(echo "${emails}" | head -n 1)"
+	if [[ -z "${email}" ]]; then
+		return 1
+	fi
 
-    echo "parcimonie: Refreshing key $fingerprint via WKD for $email"
+    echo "parcimonie: Refreshing key ${fingerprint} via WKD for ${email}"
     # Use --auto-key-locate with wkd specifically, clear other sources
-    tor_gnupg --auto-key-locate clear,nodefault,wkd --locate-keys "$email"
+    tor_gnupg --auto-key-locate clear,nodefault,wkd --locate-keys "${email}"
 }
 
 # New function to refresh key via keyserver (original behavior)
 refreshKeyViaKeyserver() {
     local fingerprint="$1"
-    echo "parcimonie: Refreshing key $fingerprint via keyserver"
-    tor_gnupg --recv-keys "$fingerprint"
+    echo "parcimonie: Refreshing key ${fingerprint} via keyserver"
+    tor_gnupg --recv-keys "${fingerprint}"
 }
 
 # New function that tries WKD first, then falls back to keyserver
 refreshKey() {
     local fingerprint="$1"
 
-    # Only try WKD if we have dirmngr (GnuPG >= 2.1) and WKD is preferred
-    if [ -n "$dirmngrPath" ] && [ "$preferWkd" = "true" ]; then
-        if refreshKeyViaWkd "$fingerprint"; then
-            return 0
-        else
-            echo "parcimonie: WKD disabled or not supported, refreshing with keyservers"
-        fi
-    fi
+	# Check if we should try WKD first
+	if [[ -z "${dirmngrPath}" ]]; then
+		echo "parcimonie: WKD skipped - dirmngr not available (GnuPG < 2.1)"
+	elif [[ "${preferWkd}" != "true" ]]; then
+		echo "parcimonie: WKD skipped - PREFER_WKD is disabled"
+	else
+		if refreshKeyViaWkd "${fingerprint}"; then
+			return 0
+		else
+			echo "parcimonie: WKD failed for key ${fingerprint}, falling back to keyserver"
+		fi
+	fi
 
-    refreshKeyViaKeyserver "$fingerprint"
+    refreshKeyViaKeyserver "${fingerprint}"
 }
 
 getNumKeys() {
@@ -318,5 +324,5 @@ while true; do
 	timeToSleep="$(getTimeToWait)"
 	echo "> Sleeping ${timeToSleep} seconds before refreshing key ${keyToRefresh}..."
 	sleep "${timeToSleep}"
-	tor_gnupg --recv-keys "${keyToRefresh}"
+	refreshKey "${keyToRefresh}"
 done
