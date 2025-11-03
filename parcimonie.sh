@@ -15,7 +15,7 @@ gnupgBinary="${GNUPG_BINARY:-}"
 torsocksBinary="${TORSOCKS_BINARY:-torsocks}"
 gnupgHomedir="${GNUPG_HOMEDIR:-}"
 gnupgKeyserver="${GNUPG_KEYSERVER:-}"
-gnupgKeyserverOptions="${GNUPG_KEYSERVER_OPTIONS:-http-proxy=}"
+# gnupgKeyserverOptions="${GNUPG_KEYSERVER_OPTIONS:-http-proxy=}"
 torAddress="${TOR_ADDRESS:-127.0.0.1}"
 torPort="${TOR_PORT:-9050}"
 minWaitTime="${MIN_WAIT_TIME:-900}" # 15 minutes
@@ -24,6 +24,7 @@ computerOnlineFraction="${COMPUTER_ONLINE_FRACTION:-1.0}" # 100% of the time
 useRandom="${USE_RANDOM:-false}"
 dirmngrPath="${DIRMNGR_PATH-}"
 dirmngrClientPath="${DIRMNGR_CLIENT_PATH-}"
+preferWkd="${PREFER_WKD:-true}" # Prefer WKD over keyservers when available
 
 # -----------------------------------------------------------------------------
 
@@ -167,11 +168,59 @@ tor_gnupg() {
 }
 
 getPublicKeys() {
-	nontor_gnupg --list-public-keys --with-colons --fixed-list-mode --with-fingerprint --with-fingerprint --with-key-data |
-		grep -a -A 1 '^pub:' |                       # only allow fingerprints of public keys (not subkeys)
-		grep -E   '^fpr:+[0-9a-fA-F]{40,}:' |        # only allow fingerprints of v4 pgp keys
-		                                             # (v3 fingerprints consist of 32 hex characters)
-		sedExtRegexp 's/^fpr:+([0-9a-fA-F]+):+$/\1/' # extract the fingerprint
+    nontor_gnupg --list-public-keys --with-colons --fixed-list-mode --with-fingerprint --with-fingerprint --with-key-data |
+        grep -a -A 1 '^pub:' |                       # only allow fingerprints of public keys (not subkeys)
+        grep -E   '^fpr:+[0-9a-fA-F]{40,}:' |        # only allow fingerprints of v4 pgp keys
+                                                     # (v3 fingerprints consist of 32 hex characters)
+        sedExtRegexp 's/^fpr:+([0-9a-fA-F]+):+$/\1/' # extract the fingerprint
+}
+
+# New function to get email addresses for a key fingerprint
+getKeyEmails() {
+    local fingerprint="$1"
+    nontor_gnupg --list-public-keys --with-colons "$fingerprint" | \
+        grep '^uid:' | \
+        sedExtRegexp 's/^uid:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:([^:]*):.*$/\1/' | \
+        sedExtRegexp 's/.*<([^>]+)>.*/\1/' | \
+        grep '@' || true
+}
+
+# New function to refresh key via WKD
+refreshKeyViaWkd() {
+    local fingerprint="$1"
+    local email
+
+    email="$(getKeyEmails "$fingerprint" | head -n 1)"
+    if [ -z "$email" ]; then
+        return 1
+    fi
+
+    echo "parcimonie: Refreshing key $fingerprint via WKD for $email"
+    # Use --auto-key-locate with wkd specifically, clear other sources
+    tor_gnupg --auto-key-locate clear,nodefault,wkd --locate-keys "$email"
+}
+
+# New function to refresh key via keyserver (original behavior)
+refreshKeyViaKeyserver() {
+    local fingerprint="$1"
+    echo "parcimonie: Refreshing key $fingerprint via keyserver"
+    tor_gnupg --recv-keys "$fingerprint"
+}
+
+# New function that tries WKD first, then falls back to keyserver
+refreshKey() {
+    local fingerprint="$1"
+
+    # Only try WKD if we have dirmngr (GnuPG >= 2.1) and WKD is preferred
+    if [ -n "$dirmngrPath" ] && [ "$preferWkd" = "true" ]; then
+        if refreshKeyViaWkd "$fingerprint"; then
+            return 0
+        else
+            echo "parcimonie: WKD disabled or not supported, refreshing with keyservers"
+        fi
+    fi
+
+    refreshKeyViaKeyserver "$fingerprint"
 }
 
 getNumKeys() {
@@ -209,7 +258,7 @@ getTimeToWait() {
 }
 
 if [ "$(getNumKeys)" -eq 0 ]; then
-	echo 'No GnuPG keys found.'
+	echo 'parcimonie: No GnuPG keys found.'
 	exit 1
 fi
 
@@ -218,10 +267,12 @@ if [ "$(echo "$computerOnlineFraction" | awk '{ print ($1 < 0.1 || $1 > 1.0) ? "
 	exit 1
 fi
 
+
+
 while true; do
-	keyToRefresh="$(getRandomKey)"
-	timeToSleep="$(getTimeToWait)"
-	echo "> Sleeping $timeToSleep seconds before refreshing key $keyToRefresh..."
-	sleep "$timeToSleep"
-	tor_gnupg --recv-keys "$keyToRefresh"
+    keyToRefresh="$(getRandomKey)"
+    timeToSleep="$(getTimeToWait)"
+    echo "parcimonie: Sleeping $timeToSleep seconds before refreshing key $keyToRefresh..."
+    sleep "$timeToSleep"
+    refreshKey "$keyToRefresh"
 done
