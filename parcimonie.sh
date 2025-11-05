@@ -5,21 +5,22 @@
 # terms of the Do What The Fuck You Want To Public License, Version 2,
 # as published by Sam Hocevar. See http://www.wtfpl.net/ for more details.
 
-if [[ -n ${PARCIMONIE_CONF} ]]; then
+# Source configuration file if set
+if [[ -n ${PARCIMONIE_CONF-} ]]; then
 	# shellcheck source=pkg/sample-configuration.conf.sample
-	source "${PARCIMONIE_CONF}" || {
-		echo 'Bad configuration file.' >&2
-		exit 1
-	}
-	export PARCIMONIE_CONF='' # Children spawned by this script (if any) should not inherit those values
+	source "${PARCIMONIE_CONF}" || printf "Failed to read configuration file (%s).\n", "${PARCIMONIE_CONF}" >&2
+	exit 1
 fi
 
-parcimonieUser="${PARCIMONIE_USER:-$(whoami)}"
+# Variables
 gnupgBinary="${GNUPG_BINARY-}"
 torsocksBinary="${TORSOCKS_BINARY:-torsocks}"
 gnupgHomedir="${GNUPG_HOMEDIR-}"
 gnupgKeyserver="${GNUPG_KEYSERVER-}"
-gnupgKeyserverOptions="${GNUPG_KEYSERVER_OPTIONS:-http-proxy=}"
+# Hard to get this one right, see ...
+# - https://github.com/EtiennePerot/parcimonie.sh/issues/32
+# - https://github.com/EtiennePerot/parcimonie.sh/issues/15
+gnupgKeyserverOptions="${GNUPG_KEYSERVER_OPTIONS:-http-proxy=none}"
 minWaitTime="${MIN_WAIT_TIME:-900}"                       # 15 minutes
 targetRefreshTime="${TARGET_REFRESH_TIME:-604800}"        # 1 week
 computerOnlineFraction="${COMPUTER_ONLINE_FRACTION:-1.0}" # 100% of the time
@@ -30,65 +31,47 @@ preferWkd="${PREFER_WKD:-true}" # Prefer WKD over keyservers when available
 
 # -----------------------------------------------------------------------------
 
-# Get user's home directory
-getUserHome() {
-	local username="$1"
+# Exit on errors or undefined variables
+set -e -u
+shopt -s inherit_errexit
+
+# Function to get the user's home directory
+getUserHomeDir() {
+	local username="${1}"
 	local passwd_entry
-	passwd_entry=$(getent passwd "${username}") || return 1
-	echo "${passwd_entry}" | cut -d: -f6
+	if [[ -z ${username} ]]; then
+		username="$(id -un)"
+	fi
+	if [[ -z ${HOME} ]]; then
+		passwd_entry=$(getent passwd "${username}")
+		HOME="$(echo "${passwd_entry}" | cut -d: -f6)"
+	fi
+	echo "${HOME}"
 }
 
-export PARCIMONIE_USER
-export GNUPG_HOMEDIR
-
-iam="$(whoami)"
-myid="$(id -u)"
-if [[ ${iam} != "${parcimonieUser}" ]]; then
-	if [[ ${parcimonieUser} == '*' ]]; then # If user requested the script to run for all users
-		if [[ ${myid} != 0 ]]; then
-			echo 'Error: Must be run as root in order to support PARCIMONIE_USER="*".'
-			exit 1
+# Function to get the user's GnuPG home directory
+getGnupgHomeDir() {
+	local username="${1}"
+	local user_home
+	if [[ -z ${gnupgHomedir} ]] && [[ -z ${GNUPGHOME+x} ]]; then
+		if [[ -z ${username} ]]; then
+			username="$(id -un)"
 		fi
-		gnupgUsers=()
-		getent=$(getent passwd)
-		allUsers=$(echo "${getent}" | cut -d ':' -f 1)
-		for user in ${allUsers}; do
-			userHomeDir=$(getUserHome "${user}")
-			if [[ -d "${userHomeDir}/.gnupg)" ]]; then
-				gnupgUsers+=("${user}")
-			fi
-		done
-		# If we have 0 users, error out
-		if [[ ${#gnupgUsers[@]} -eq 0 ]]; then
-			echo 'Error: No users found with a ~/.gnupg directory.'
-			exit 1
-		fi
-		# If we just have one user, just su to it
-		if [[ ${#gnupgUsers[@]} -eq 1 ]]; then
-			PARCIMONIE_USER="${gnupgUsers[0]}"
-			userHomeDir=$(getUserHome "${PARCIMONIE_USER}")
-			GNUPG_HOMEDIR="${userHomeDir}/.gnupg"
-			exec su -c "$0" "${gnupgUsers[0]}"
-		fi
-		# If we have more than one, spawn children processes for each
-		childrenPids=()
-		for user in "${gnupgUsers[@]}"; do
-			PARCIMONIE_USER="${user}"
-			userHomeDir=$(getUserHome "${user}")
-			GNUPG_HOMEDIR="${userHomeDir}/.gnupg"
-			su -c "$0" "${user}" &
-			childrenPids+=("$!")
-		done
-		for childPid in "${childrenPids[@]}"; do
-			wait "${childPid}"
-		done
-		exit 0
-	else # If the user requested the script to run for a specific user which is not the current one
-		exec su -c "$0" "${parcimonieUser}"
+		user_home=$(getUserHomeDir "${username}")
+		gnupgHomedir="${user_home}/.gnupg"
+		GNUPGHOME="${gnupgHomedir}"
+	elif [[ -n ${GNUPGHOME} ]]; then
+		gnupgHomedir="${GNUPGHOME}"
 	fi
-fi
+	echo "${gnupgHomedir}"
+}
 
-# If we get here, we know that we are the right user.
+# Check if we have GnuPG home directory
+gnupgHomeDir="$(getGnupgHomeDir "${USER}")"
+if [[ ! -d ${gnupgHomeDir} ]]; then
+	echo "parcimonie: No GPG directory found at ${gnupgHomedir}; Exiting."
+	exit 0
+fi
 
 # Find the gpg binary.
 if [[ -n ${gnupgBinary} ]]; then
@@ -104,8 +87,8 @@ elif command -v gpg &>/dev/null; then
 	gnupgBinary="$(command -v gpg)"
 	echo "Detected gpg at '${gnupgBinary}'."
 else
-	echo 'gpg not found. Please make sure you have installed GnuPG.'
-	echo 'You may manually specify the full path to gpg with GNUPG_BINARY.'
+	echo 'No GnuPG binary program found. Please make sure GnuPG is installed.'
+	echo 'A custom path can be set in the GNUPG_BINARY environment variable.'
 	exit 1
 fi
 
@@ -121,6 +104,8 @@ elif command -v dirmngr &>/dev/null; then
 	echo "Detected dirmngr at '${dirmngrPath}'; assuming GnuPG >= 2.1."
 else
 	printf "dirmngr not specified, and not found in \$PATH. Assuming GnuPG < 2.1.\n"
+	echo "Sorry, Your GnuPG version is not supported."
+	exit 1
 fi
 
 if [[ -n ${dirmngrPath} ]]; then
@@ -138,7 +123,7 @@ if [[ -n ${dirmngrPath} ]]; then
 	else
 		echo "dirmngr-client not found, while dirmngr was found at '${dirmngrPath}'."
 		echo 'Please make sure your installation of GnuPG is complete.'
-		echo 'You may manually specify the full path to dirmngr-client with DIRMNGR_CLIENT_PATH.'
+		echo 'A custom path can be set in the DIRMNGR_CLIENT_PATH environment variable.'
 		exit 1
 	fi
 fi
@@ -200,7 +185,11 @@ tor_gnupg() {
 
 getPublicKeys() {
 	local gnupg_output
-	gnupg_output=$(nontor_gnupg --list-public-keys --with-colons --fixed-list-mode --with-fingerprint --with-fingerprint --with-key-data) || return $?
+	gnupg_output=$(
+		# shellcheck disable=SC2310
+		nontor_gnupg --list-public-keys --with-colons --fixed-list-mode \
+			--with-fingerprint --with-fingerprint --with-key-data
+	) || return $?
 
 	local grep_output
 	grep_output=$(echo "${gnupg_output}" | grep -a -A 1 '^pub:') || return $?
@@ -208,78 +197,195 @@ getPublicKeys() {
 	echo "${grep_output}" | sedExtRegexp 's/^fpr:+([0-9a-fA-F]+):+$/\1/'
 }
 
-# New function to get email addresses for a key fingerprint
+# Function to get email addresses assiciated with a key
 getKeyEmails() {
-    local fingerprint="$1"
-    nontor_gnupg --list-public-keys --with-colons "${fingerprint}" | \
-        grep '^uid:' | \
-        sedExtRegexp 's/^uid:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:([^:]*):.*$/\1/' | \
-        sedExtRegexp 's/.*<([^>]+)>.*/\1/' | \
-        grep '@' || true
+	local fingerprint="$1"
+	# shellcheck disable=SC2310
+	nontor_gnupg --list-public-keys --with-colons "${fingerprint}" |
+		grep '^uid:' |
+		sedExtRegexp 's/^uid:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:([^:]*):.*$/\1/' |
+		sedExtRegexp 's/.*<([^>]+)>.*/\1/' |
+		grep '@' || true
 }
 
-# New function to refresh key via WKD
+# Function to parse GnuPG status output
+gnupgStatus() {
+	local status_output="$1"
+	local operation="$2"
+	local exit_code="$3"
+
+	# Look for IMPORT_OK with specific flags
+	if echo "${status_output}" | grep -q '^\[GNUPG:\] IMPORT_OK [1-9]'; then
+		# Extract the flag to see what was imported
+		local import_flag
+		status_data="$(echo "${status_output}" | grep '^\[GNUPG:\] IMPORT_OK')"
+		status_line=$(echo "${status_data}" | head -1)
+		import_flag=$(echo "${status_line}" | awk '{print $3}')
+		case "${import_flag}" in
+		0) echo "parcimonie: ++++ Key unchanged (${operation})" ;;
+		1) echo "parcimonie: ++++ New key imported via ${operation}" ;;
+		2) echo "parcimonie: ++++ New user IDs added via ${operation}" ;;
+		4) echo "parcimonie: ++++ New signatures added via ${operation}" ;;
+		8) echo "parcimonie: ++++ New subkeys added via ${operation}" ;;
+		16) echo "parcimonie: ++++ Private key updated via ${operation}" ;;
+		*) echo "parcimonie: ++++ Key updated via ${operation} (flag: ${import_flag})" ;;
+		esac
+		return 0
+	elif echo "${status_output}" | grep -q '^\[GNUPG:\] FAILURE'; then
+		if echo "${status_output}" | grep -q 'gpg: error reading key: No data'; then
+			echo "parcimonie: ++++ No key found via ${operation}"
+			return 1
+		elif echo "${status_output}" | grep -q 'gpg: error reading key: Network is down'; then
+			echo "parcimonie: ++++ ${operation} host unreachable"
+			return 1
+		elif echo "${status_output}" | grep -q 'gpg: error reading key: Provided object is too large'; then
+			echo "parcimonie: ++++ ${operation} Provided object is too large"
+			return 1
+		else
+			echo "parcimonie: ++++ ${operation} failure"
+			echo "status output: ${status_output}"
+			return 1
+		fi
+	elif echo "${status_output}" | grep -q '^\[GNUPG:\] IMPORT_OK 0'; then
+		echo "parcimonie: ++++ Key unchanged (${operation})"
+		return 0
+	elif echo "${status_output}" | grep -q '^\[GNUPG:\] NO_PUBKEY'; then
+		echo "parcimonie: ++++ No key found via ${operation}"
+		return 1
+	elif echo "${status_output}" | grep -q '^\[GNUPG:\] KEYSERVER_FAILURE'; then
+		echo "parcimonie: ++++ ${operation} server failure"
+		return 1
+	elif echo "${status_output}" | grep -q '^\[GNUPG:\] NODATA'; then
+		echo "parcimonie: ++++ No data received from ${operation}"
+		return 1
+	else
+		# Fallback based on exit code
+		if [[ ${exit_code} -eq 0 ]]; then
+			echo "parcimonie: ++++ Operation completed (${operation})"
+			return 0
+		else
+			echo "parcimonie: ++++ ${operation} failed (exit code: ${exit_code})"
+			echo "status output: ${status_output}"
+			return 1
+		fi
+	fi
+}
+
+# Function to refresh a key via WKD
+# FIXME: What happens if WKD returns another key/fingerprint for an email, that the one we wanted to refresh?
 refreshKeyViaWkd() {
 	local fingerprint="$1"
 	local email
 	local emails
+	local status_output
+	local exit_code
 
-	emails="$(getKeyEmails "${fingerprint}")" || return 1
-	email="$(echo "${emails}" | head -n 1)"
-	if [[ -z "${email}" ]]; then
+	emails="$(getKeyEmails "${fingerprint}")"
+
+	email_count=$(echo "${emails}" | wc -l)
+	printf "parcimonie: ++ Found %d email(s) associated with this key\n" "${email_count}"
+
+	if [[ -z ${emails} ]]; then
+		echo "parcimonie: ++ No email associated with this key, skipping WKD search"
 		return 1
 	fi
 
-    echo "parcimonie: Refreshing key ${fingerprint} via WKD for ${email}"
-    # Use --auto-key-locate with wkd specifically, clear other sources
-    tor_gnupg --auto-key-locate clear,nodefault,wkd --locate-keys "${email}"
-}
-
-# New function to refresh key via keyserver (original behavior)
-refreshKeyViaKeyserver() {
-    local fingerprint="$1"
-    echo "parcimonie: Refreshing key ${fingerprint} via keyserver"
-    tor_gnupg --recv-keys "${fingerprint}"
-}
-
-# New function that tries WKD first, then falls back to keyserver
-refreshKey() {
-    local fingerprint="$1"
-
-	# Check if we should try WKD first
-	if [[ -z "${dirmngrPath}" ]]; then
-		echo "parcimonie: WKD skipped - dirmngr not available (GnuPG < 2.1)"
-	elif [[ "${preferWkd}" != "true" ]]; then
-		echo "parcimonie: WKD skipped - PREFER_WKD is disabled"
-	else
-		if refreshKeyViaWkd "${fingerprint}"; then
-			return 0
-		else
-			echo "parcimonie: WKD failed for key ${fingerprint}, falling back to keyserver"
+	# Try each email address until one succeeds
+	while IFS= read -r email; do
+		if [[ -z ${email} ]]; then
+			continue
 		fi
+
+		echo "parcimonie: +++ Searching web key directories for keys of (${email})"
+
+		# Run the WKD search
+		# shellcheck disable=SC2310
+		status_output=$(
+			tor_gnupg --status-fd 2 --auto-key-locate clear,nodefault,wkd \
+				--locate-keys "${email}" 2>&1
+		) || exit_code=$?
+		if [[ -z ${exit_code-} ]]; then
+			exit_code=0
+		fi
+
+		# Check if this email succeeded
+		# shellcheck disable=SC2310
+		if gnupgStatus "${status_output}" "WKD" "${exit_code}"; then
+			return 0 # Success! Exit immediately
+		fi
+	done <<<"${emails}"
+
+	# None of the email address retrieved a positive result
+	return 1
+}
+
+# Function to refresh key via keyservers
+refreshKeyViaKeyserver() {
+	local fingerprint="$1"
+	local status_output
+	local exit_code
+
+	echo "parcimonie: ++ Searching keyservers ..."
+
+	# shellcheck disable=SC2310
+	status_output=$(
+		tor_gnupg --status-fd 2 --recv-keys "${fingerprint}" 2>&1
+	)
+	exit_code=$?
+	if [[ -z ${exit_code-} ]]; then
+		exit_code=0
 	fi
 
-    refreshKeyViaKeyserver "${fingerprint}"
+	# Check if this email succeeded
+	# shellcheck disable=SC2310
+	if gnupgStatus "${status_output}" "WKD" "${exit_code}"; then
+		return 0 # Success! Exit immediately
+	fi
+	# All attempts failed
+	return 1
 }
 
+# Function to refresh a key - trying WKD first, with fallback back to keyservers
+refreshKey() {
+	local fingerprint="$1"
+
+	# Check if we should try WKD first
+	if [[ -z ${dirmngrPath} ]]; then
+		echo "parcimonie: WKD skipped - dirmngr not available"
+	elif [[ ${preferWkd} != "true" ]]; then
+		echo "parcimonie: Web Key Directory disabled in configuration"
+	else
+		# shellcheck disable=SC2310
+		if refreshKeyViaWkd "${fingerprint}"; then
+			return 0
+		fi
+	fi
+	refreshKeyViaKeyserver "${fingerprint}"
+}
+
+# Function to get number of keys in keyring
 getNumKeys() {
 	local publicKeys
+	# shellcheck disable=SC2310
 	publicKeys=$(getPublicKeys) || return $?
 	local numKeys
 	numKeys=$(echo "${publicKeys}" | wc -l)
 	echo "${numKeys}" | keepDigitsOnly
 }
 
+# Function to select random key from the keyring
 getRandomKey() {
 	local allPublicKeys fingerprint randomValue
 	allPublicKeys=()
 	for fingerprint in $(getPublicKeys); do
 		allPublicKeys+=("${fingerprint}")
 	done
+	# shellcheck disable=SC2310
 	randomValue=$(getRandom) || return $?
 	echo "${allPublicKeys[$((randomValue % ${#allPublicKeys[@]}))]}"
 }
 
+# Function to compute the ramdom time to wait
 getTimeToWait() {
 	# The target refresh time is scaled by the fraction of time that the computer is expected to be online.
 	# expr or bash's $(()) don't support fractional math. Use awk.
@@ -295,20 +401,88 @@ getTimeToWait() {
 	#   minimum wait time + rand(minimum wait time)
 	# = $minWaitTime + $(getRandom) % $minWaitTime
 	local numKeys randomValue
+	# shellcheck disable=SC2310
 	numKeys=$(getNumKeys) || return $?
 	if [[ $((2 * scaledRefreshTime)) -le ${numKeys} ]]; then
+		# shellcheck disable=SC2310
 		randomValue=$(getRandom) || return $?
 		echo $((minWaitTime + randomValue % minWaitTime))
 	else
+		# shellcheck disable=SC2310
 		randomValue=$(getRandom) || return $?
 		echo $((minWaitTime + randomValue % (2 * scaledRefreshTime / numKeys)))
 	fi
 }
 
+# Convert seconds to human readable time with years, months, days, hours, minutes, and seconds
+_human_time() {
+    T=$1
+
+    # Calculate years (365.25 days accounting for leap years)
+    Y=$((T / 31557600))  # 365.25 * 24 * 3600
+    T=$((T % 31557600))
+
+    # Calculate months (30.44 days average)
+    Mo=$((T / 2629746))  # 30.44 * 24 * 3600
+    T=$((T % 2629746))
+
+    # Calculate days
+    D=$((T / 86400))
+    T=$((T % 86400))
+
+    # Calculate hours
+    H=$((T / 3600))
+    T=$((T % 3600))
+
+    # Calculate minutes
+    M=$((T / 60))
+    S=$((T % 60))
+
+    # Build output string
+    output=""
+    [[ ${Y} -gt 0 ]] && output="${output}${Y} year"
+    [[ ${Y} -gt 1 ]] && output="${output}s"
+    [[ ${Y} -gt 0 ]] && output="${output} "
+
+    [[ ${Mo} -gt 0 ]] && output="${output}${Mo} month"
+    [[ ${Mo} -gt 1 ]] && output="${output}s"
+    [[ ${Mo} -gt 0 ]] && output="${output} "
+
+    [[ ${D} -gt 0 ]] && output="${output}${D} day"
+    [[ ${D} -gt 1 ]] && output="${output}s"
+    [[ ${D} -gt 0 ]] && output="${output} "
+
+    # For very long periods, skip hours/minutes/seconds if we have years or months
+    if [[ ${Y} -gt 0 ]] || [[ ${Mo} -gt 0 ]]; then
+        # Only show hours for periods with years/months if days is small
+        [[ ${D} -lt 7 ]] && [[ ${H} -gt 0 ]] && output="${output}${H} hour"
+        [[ ${D} -lt 7 ]] && [[ ${H} -gt 1 ]] && output="${output}s"
+        [[ ${D} -lt 7 ]] && [[ ${H} -gt 0 ]] && output="${output} "
+    else
+        # For shorter periods, show all components
+        [[ ${H} -gt 0 ]] && output="${output}${H} hour"
+        [[ ${H} -gt 1 ]] && output="${output}s"
+        [[ ${H} -gt 0 ]] && output="${output} "
+
+        [[ ${M} -gt 0 ]] && output="${output}${M} minute"
+        [[ ${M} -gt 1 ]] && output="${output}s"
+        [[ ${M} -gt 0 ]] && output="${output} "
+
+        # Always show seconds for periods less than a day
+        [[ ${Y} -eq 0 ]] && [[ ${Mo} -eq 0 ]] && [[ ${D} -eq 0 ]] && output="${output}${S} second"
+        [[ ${Y} -eq 0 ]] && [[ ${Mo} -eq 0 ]] && [[ ${D} -eq 0 ]] && [[ ${S} -gt 1 ]] && output="${output}s"
+    fi
+
+    # Remove trailing space and output
+    echo "${output% }"
+}
+
 numKeys=$(getNumKeys)
 if [[ ${numKeys} -eq 0 ]]; then
-	echo 'No GnuPG keys found.'
-	exit 1
+	echo 'parcimonie: Keyring has no keys to refresh; Exiting'
+	exit 0
+else
+	echo "parcimonie: Found ${numKeys} OpenPGP key(s) to manage."
 fi
 
 awk_result="$(echo "${computerOnlineFraction}" | awk '{ print ($1 < 0.1 || $1 > 1.0) ? "bad" : "good" }')"
@@ -317,12 +491,15 @@ if [[ ${awk_result} == 'bad' ]]; then
 	exit 1
 fi
 
-
-
 while true; do
 	keyToRefresh="$(getRandomKey)"
 	timeToSleep="$(getTimeToWait)"
-	echo "> Sleeping ${timeToSleep} seconds before refreshing key ${keyToRefresh}..."
+	humanTimetoSleep="$(_human_time "${timeToSleep}")"
+	keyID="${keyToRefresh: -16}"
+	printf "\n----------------------------------------------------------------\n"
+	# printf "parcimonie: Next refresh of key %s in %d seconds.\n" "${keyToRefresh}" "${timeToSleep}\n"
+	printf "parcimonie: + Next key refresh in %s, for key %s ...\n" "${humanTimetoSleep}" "${keyID}"
 	sleep "${timeToSleep}"
 	refreshKey "${keyToRefresh}"
+	echo
 done
