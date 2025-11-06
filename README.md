@@ -1,5 +1,8 @@
 # `parcimonie.sh`
 
+<https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=836266#76>
+<https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=836266;msg=98>
+
 This is a reimplementation of [Parcimonie], written completely in a si{mp,ng}le Bash script.
 
 ## What does it do?
@@ -16,8 +19,8 @@ The **tl;dr** version: `gpg --refresh-keys` discloses your entire list of PGP ke
 
 ## Known security issues
 
-* On GnuPG 2.1+, key refreshes are not guaranteed to use unique Tor circuit (issue #15).
-* On GnuPG 2.1+, if the user refreshes a key outside of `parcimonie.sh` prior to `parcimonie.sh`'s first key refresh, **Tor will not be used for key refreshes** (also issue #15).
+- On GnuPG 2.1+, key refreshes are not guaranteed to use unique Tor circuit (issue #15).
+- On GnuPG 2.1+, if the user refreshes a key outside of `parcimonie.sh` prior to `parcimonie.sh`'s first key refresh, **Tor will not be used for key refreshes** (also issue #15).
 
 ## Installation
 
@@ -29,29 +32,29 @@ Otherwise, just copy `parcimonie.sh` somewhere and make it run at boot with the 
 
 ## Dependencies
 
-* [GnuPG]: tested with GnuPG 2, probably works OK with 1.* as well
-* [torsocks] 2.0
-* Have [Tor] running
+- [GnuPG]: tested with GnuPG 2, probably works OK with 1.\* as well
+- [torsocks] 2.0
+- Have [Tor] running
 
 ## Usage
 
 Just run `parcimonie.sh`. There are some **optional** environment variables that you can use to override the default values.
 
-* `TOR_ADDRESS`: IP on which Tor is listening. If not set, uses `127.0.0.1`.
-* `TOR_PORT`: Port on which Tor is listening. If not set, uses `9050`. Make sure this refers to a `SOCKSPort` entry of your `torrc` for which `NoIsolateSOCKSAuth` is not present. If you have no idea what that means, you have nothing to worry about.
-* `PARCIMONIE_USER`: The user to run as. If not set, will run as whatever user is running the script. If set, will `su` to the specified user. You can also set it to the special value `*`, which will cause the script to multiple run instances of itself: one instance for each user who has a directory called `.gnupg` in their home directory. Useful for boot scripts, and for config files for the systemd service.
-* `MIN_WAIT_TIME`: Minimum time to wait between key refreshes. Defaults to 900 seconds (15 minutes).
-* `TARGET_REFRESH_TIME`: Rough expected time for refreshing every key in the keyring. Defaults to 604800 seconds (1 week). Note that this doesn't guarantee that every key will be refreshed in that time. The time intervals between refreshes and the actual keys to refresh are picked randomly every time. See [the delay computation function][getTimeToWait function] for the exact formula.
-* `COMPUTER_ONLINE_FRACTION`: Fraction of time that the computer is expected to be online, from 0.1 (online 10% of the time) to 1.0 (always online). Defaults to 1.0. This is used to scale `TARGET_REFRESH_TIME` accordingly in order to make it likely enough for keys to be regularly refreshed on a computer that is not online permanently. `MIN_WAIT_TIME` is still honored.
-* `USE_RANDOM`: Whether or not to use `/dev/random` instead of `/dev/urandom` as source of randomness. By default, this is set to `false`, therefore `/dev/urandom` is used.
-* `GNUPG_BINARY`: Path to `gpg`. If not set, will use `gpg2` or `gpg` from the `$PATH`.
-* `DIRMNGR_PATH`: Path to `dirmngr`, for GnuPG < 2.1. If not set, will try to find it in `$PATH`. If not found, GnuPG < 2.1 will be assumed.
-* `DIRMNGR_CLIENT_PATH`: Path to `dirmngr-client`. If not set, will try to find it in `$PATH`. `dirmngr-client` is required if `dirmngr` is specified or found in `$PATH`.
-* `TORSOCKS_BINARY`: Path to `torsocks`. If not set, will use `torsocks` from the `$PATH`.
-* `GNUPG_HOMEDIR`: Value for the `--homedir` argument of `gpg`. Ignored when `PARCIMONIE_USER=*`. If not set, no `--homedir` argument is passed, which usually means `~/.gnupg` will be used.
-* `GNUPG_KEYSERVER`: Value for the `--keyserver` argument of `gpg`. If not set, no `--keyserver` argument is passed, which means your default keyserver will be used.
-* `GNUPG_KEYSERVER_OPTIONS`: Value for the `--keyserver-options` argument of `gpg`. If not set, a single `http-proxy=` argument is passed. If you already use torify connections to keyservers with gpg's `http-proxy` keyserver-option in your `gpg.conf` while having other keyserver-options defined on top of that, you will need to re-specify those along with `http-proxy=` in `GNUPG_KEYSERVER_OPTIONS` in order to disable the proxying part. `parcimonie.sh` needs to run `gpg` with `torsocks` in order to ensure that all key grabs happen on different Tor circuits, and `torsocks` won't allow `gpg` to connect to its `http-proxy` on `127.0.0.1`.
-* `PARCIMONIE_CONF`: If set, this file will be sourced before running. Useful to set environment variables without polluting the environment too much.
+- `TOR_ADDRESS`: IP on which Tor is listening. If not set, uses `127.0.0.1`.
+- `TOR_PORT`: Port on which Tor is listening. If not set, uses `9050`. Make sure this refers to a `SOCKSPort` entry of your `torrc` for which `NoIsolateSOCKSAuth` is not present. If you have no idea what that means, you have nothing to worry about.
+- `PARCIMONIE_USER`: The user to run as. If not set, will run as whatever user is running the script. If set, will `su` to the specified user. You can also set it to the special value `*`, which will cause the script to multiple run instances of itself: one instance for each user who has a directory called `.gnupg` in their home directory. Useful for boot scripts, and for config files for the systemd service.
+- `MIN_WAIT_TIME`: Minimum time to wait between key refreshes. Defaults to 900 seconds (15 minutes).
+- `TARGET_REFRESH_TIME`: Rough expected time for refreshing every key in the keyring. Defaults to 604800 seconds (1 week). Note that this doesn't guarantee that every key will be refreshed in that time. The time intervals between refreshes and the actual keys to refresh are picked randomly every time. See [the delay computation function][getTimeToWait function] for the exact formula.
+- `COMPUTER_ONLINE_FRACTION`: Fraction of time that the computer is expected to be online, from 0.1 (online 10% of the time) to 1.0 (always online). Defaults to 1.0. This is used to scale `TARGET_REFRESH_TIME` accordingly in order to make it likely enough for keys to be regularly refreshed on a computer that is not online permanently. `MIN_WAIT_TIME` is still honored.
+- `USE_RANDOM`: Whether or not to use `/dev/random` instead of `/dev/urandom` as source of randomness. By default, this is set to `false`, therefore `/dev/urandom` is used.
+- `GNUPG_BINARY`: Path to `gpg`. If not set, will use `gpg2` or `gpg` from the `$PATH`.
+- `DIRMNGR_PATH`: Path to `dirmngr`, for GnuPG < 2.1. If not set, will try to find it in `$PATH`. If not found, GnuPG < 2.1 will be assumed.
+- `DIRMNGR_CLIENT_PATH`: Path to `dirmngr-client`. If not set, will try to find it in `$PATH`. `dirmngr-client` is required if `dirmngr` is specified or found in `$PATH`.
+- `TORSOCKS_BINARY`: Path to `torsocks`. If not set, will use `torsocks` from the `$PATH`.
+- `GNUPG_HOMEDIR`: Value for the `--homedir` argument of `gpg`. Ignored when `PARCIMONIE_USER=*`. If not set, no `--homedir` argument is passed, which usually means `~/.gnupg` will be used.
+- `GNUPG_KEYSERVER`: Value for the `--keyserver` argument of `gpg`. If not set, no `--keyserver` argument is passed, which means your default keyserver will be used.
+- `GNUPG_KEYSERVER_OPTIONS`: Value for the `--keyserver-options` argument of `gpg`. If not set, a single `http-proxy=` argument is passed. If you already use torify connections to keyservers with gpg's `http-proxy` keyserver-option in your `gpg.conf` while having other keyserver-options defined on top of that, you will need to re-specify those along with `http-proxy=` in `GNUPG_KEYSERVER_OPTIONS` in order to disable the proxying part. `parcimonie.sh` needs to run `gpg` with `torsocks` in order to ensure that all key grabs happen on different Tor circuits, and `torsocks` won't allow `gpg` to connect to its `http-proxy` on `127.0.0.1`.
+- `PARCIMONIE_CONF`: If set, this file will be sourced before running. Useful to set environment variables without polluting the environment too much.
 
 ### systemd service
 
@@ -65,7 +68,7 @@ You can also use the systemd user service called `parcimonie.sh`, which uses the
 
 Oh gee, let me think.
 
-```
+```shell
 $ pactree parcimonie-git                       $ pactree -d 1 parcimonie-sh-git
 parcimonie-git                                 parcimonie-sh-git
 ├─perl-any-moose                               ├─bash
