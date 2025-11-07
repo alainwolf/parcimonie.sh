@@ -28,8 +28,8 @@ shopt -s inherit_errexit
 # -------------------------------------
 
 # Set by environment variable
-if [[ -n ${PARCIMONIE_CONF-} ]];  then
-	if [[ -r "${PARCIMONIE_CONF}" ]]; then
+if [[ -n ${PARCIMONIE_CONF-} ]]; then
+	if [[ -r ${PARCIMONIE_CONF} ]]; then
 		source "${PARCIMONIE_CONF}"
 	fi
 
@@ -39,13 +39,13 @@ elif [[ -r "$(dirname "$0")/parcimonie.conf" ]]; then
 
 # XDG base configuration directory
 elif [[ -n ${XDG_CONFIG_HOME-} ]]; then
-	if [[ -r "${XDG_CONFIG_HOME}/parcimonie.conf"  ]]; then
+	if [[ -r "${XDG_CONFIG_HOME}/parcimonie.conf" ]]; then
 		source "${XDG_CONFIG_HOME}/parcimonie.conf"
 	fi
 
 # ~/.config directory
 elif [[ -n ${HOME-} ]]; then
-	if [[ -r "${HOME}/.config/parcimonie.conf"  ]]; then
+	if [[ -r "${HOME}/.config/parcimonie.conf" ]]; then
 		source "${HOME}/.config/parcimonie.conf"
 	fi
 
@@ -94,7 +94,7 @@ SESSION_ONLINE_FRACTION=${SESSION_ONLINE_FRACTION-}
 
 # Fraction of time the computer is online - default is 100% of the tome
 # Same as above, but for system-profiles (aka servers)
-COMPUTER_ONLINE_FRACTION=${COMPUTER_ONLINE_FRACTION:1.0}  # 100% of the time
+COMPUTER_ONLINE_FRACTION=${COMPUTER_ONLINE_FRACTION:1.0} # 100% of the time
 
 # Path to dirmngr program - default is to search in $PATH
 DIRMNGR_CMD="${DIRMNGR_CMD:$(command -v dirmngr)}"
@@ -108,7 +108,6 @@ PREFER_WKD=${PREFER_WKD:true}
 # Exit on undefined variables
 set -u
 
-
 # ---------------------------------------------------------
 # Functions
 # ---------------------------------------------------------
@@ -116,13 +115,12 @@ set -u
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 
-
 # ---------------------------------------------------------
 # Initialization
 # ---------------------------------------------------------
 
 # Check if we are running as systemd service
-if [[ -z "${INVOCATION_ID+}" ]]; then
+if [[ -z ${INVOCATION_ID+} ]]; then
 
 	# We are running as a systemd service - reconfigure the timer
 	echo "TThis script is intended to be run as a systemd service."
@@ -188,7 +186,6 @@ if [[ ${_awk_result} == 'bad' ]]; then
 	exit 1
 fi
 
-
 # ---------------------------------------------------------
 # Main
 # ---------------------------------------------------------
@@ -202,7 +199,7 @@ printf "parcimonie: + Refreshing key %s ...\n" "${_key_id}"
 _refreshKey "${_key_to_refresh}"
 
 # Check if we are running as systemd service
-if [[ -n "${INVOCATION_ID-}" ]]; then
+if [[ -n ${INVOCATION_ID-} ]]; then
 
 	# We are running as a systemd service - reconfigure the timer
 	echo "parcimonie: Reconfiguring systemd timer ..."

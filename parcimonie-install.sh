@@ -6,17 +6,15 @@
 # See InstallHelpText() for usage information
 # ******************************************************************************
 
-
 # ---------------------------------------------------------
 # Variables
 # ---------------------------------------------------------
 
 thisVersion="$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
-minWaitTime="${MIN_WAIT_TIME:-900}"                       # 15 minutes
+minWaitTime="${MIN_WAIT_TIME:-900}" # 15 minutes
 #targetRefreshTime="${TARGET_REFRESH_TIME:-604800}"        # 1 week
 #computerOnlineFraction="${COMPUTER_ONLINE_FRACTION:-1.0}" # 100% of the time
 scriptHelpUrl="https://github.com/alainwolf/parcimonie.sh"
-
 
 # ---------------------------------------------------------
 # Functions
@@ -24,7 +22,6 @@ scriptHelpUrl="https://github.com/alainwolf/parcimonie.sh"
 
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
-
 
 # ---------------------------------------------------------
 # Initialize
@@ -113,24 +110,20 @@ case "${1-}" in
 --all-users)
 	# Install for all non-system users
 	getent=$(getent passwd)
+	# FIXME: Check for home directories under /home/ only - may miss users with
+	#        custom home dirs use more appropriate method for identifying
+	#        interactive users.
 	allusers=$(echo "${getent}" | awk -F: '$6 ~ /^\/home\// {print $1}')
 	for user in ${allusers}; do
 		install_user_service "${user}"
 		install_user_timer "${user}"
-		echo "Don't forget to enable and start the timer for ${user}:"
-		echo "  sudo -u ${user} systemctl --user enable parcimonie.timer"
-		echo "  sudo -u ${user} systemctl --user start parcimonie.timer"
 	done
 	;;
 "")
 	# No arguments provided - offer to install for current user
-	# trunk-ignore(shellcheck/SC2310)
 	if confirm_installation; then
 		install_user_service "${calling_user}"
 		install_user_timer "${calling_user}"
-		echo "Don't forget to enable and start the timer:"
-		echo "  systemctl --user enable parcimonie.timer"
-		echo "  systemctl --user start parcimonie.timer"
 	fi
 	;;
 --help | *)

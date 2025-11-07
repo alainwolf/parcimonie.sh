@@ -3,7 +3,7 @@
 # parcimonie-ng - functions library
 # ******************************************************************************
 
-# Service unit file contents
+# systemd service unit file contents
 _systemd_service_content="[Unit]
 Description=parcimonie key refresher
 After=network.target
@@ -17,6 +17,7 @@ ExecStartPre=/bin/sleep ${timeToWait}
 WantedBy=default.target
 "
 
+# systemd timer unit file contents
 _systemd_timer_content="[Unit]
 Description=parcimonie key refresh timer
 Requires=parcimonie.service
@@ -52,8 +53,8 @@ _install_user_service() {
 		mkdir -p "${_service_dir}"
 
 		# Create the systemd unit files for the service
-		echo "${_systemd_service_content}" > "${_service_dir}/parcimonie.service"
-		echo "${_systemd_timer_content}"   > "${_service_dir}/parcimonie.timer"
+		echo "${_systemd_service_content}" >"${_service_dir}/parcimonie.service"
+		echo "${_systemd_timer_content}" >"${_service_dir}/parcimonie.timer"
 
 		# Reload systemd user configuration
 		systemctl --user daemon-reload
@@ -74,7 +75,7 @@ _install_user_service() {
 
 		# Create the systemd unit file for the service
 		echo "${_systemd_service_content}" | sudo - u "${_user_name}" tee "${_service_dir}/parcimonie.service" >/dev/null
-		echo "${_systemd_timer_content}"   | sudo - u "${_user_name}" tee "${_service_dir}/parcimonie.timer" >/dev/null
+		echo "${_systemd_timer_content}" | sudo - u "${_user_name}" tee "${_service_dir}/parcimonie.timer" >/dev/null
 
 		# Reload systemd user configuration
 		sudo -u "${_user_name}" systemctl --user daemon-reload
@@ -165,18 +166,19 @@ _confirm_install() {
 }
 
 # Function to calculate online fraction of the user
+# FIXME: This is work in progress! Do not use!
 _estimate_user_activity() {
-    local user="$1"
-    local average_session_hours
-    local last_data
-    local online_fraction
+	local user="$1"
+	local average_session_hours
+	local last_data
+	local online_fraction
 
-    # Get user session durations
-    last_data="$(last --nohostname "${user}")"
-    # last_data="$(echo "${last_data}" | head -20)"
+	# Get user session durations
+	last_data="$(last --nohostname "${user}")"
+	# last_data="$(echo "${last_data}" | head -20)"
 
-    # Calculate average session duration (in seconds)
-    average_session_time=$(echo "${last_data}" | awk '
+	# Calculate average session duration (in seconds)
+	average_session_time=$(echo "${last_data}" | awk '
     BEGIN { total = 0; count = 0 }
     # Only process completed sessions
     /logged in/ && !/still logged in/ {
@@ -201,39 +203,40 @@ _estimate_user_activity() {
             print total / count
     }')
 
-    # Simple heuristic: if average session > 12 hours, assume high availability
-    # if average session < 4 hours, assume low availability
-    if (( $(echo "${average_session_hours} >= 12" | bc -l) )); then
-        online_fraction="0.8"  # High availability
-    elif (( $(echo "${average_session_hours} >= 8" | bc -l) )); then
-        online_fraction="0.6"  # Medium availability
-    elif (( $(echo "${average_session_hours} >= 4" | bc -l) )); then
-        online_fraction="0.4"  # Low availability
-    else
-        online_fraction="0.2"  # Very low availability
-    fi
+	# Simple heuristic: if average session > 12 hours, assume high availability
+	# if average session < 4 hours, assume low availability
+	if (($(echo "${average_session_hours} >= 12" | bc -l))); then
+		online_fraction="0.8" # High availability
+	elif (($(echo "${average_session_hours} >= 8" | bc -l))); then
+		online_fraction="0.6" # Medium availability
+	elif (($(echo "${average_session_hours} >= 4" | bc -l))); then
+		online_fraction="0.4" # Low availability
+	else
+		online_fraction="0.2" # Very low availability
+	fi
 
-    echo "${online_fraction}"
+	echo "${online_fraction}"
 }
 
 # Use in your timer calculation
+# FIXME: This is work in progress! Do not use!
 _calculate_user_timer_interval() {
-    local user="$1"
-    local num_keys="$2"
+	local user="$1"
+	local num_keys="$2"
 
-    # Estimate how often this user is online
-    local online_fraction
-    online_fraction=$(estimate_user_activity "${user}")
+	# Estimate how often this user is online
+	local online_fraction
+	online_fraction=$(estimate_user_activity "${user}")
 
-    # Adjust refresh time based on activity
-    local adjusted_refresh_time
-    adjusted_refresh_time=$(echo "${TARGET_REFRESH_TIME} * ${online_fraction}" | bc -l)
+	# Adjust refresh time based on activity
+	local adjusted_refresh_time
+	adjusted_refresh_time=$(echo "${TARGET_REFRESH_TIME} * ${online_fraction}" | bc -l)
 
-    # Calculate interval like original script
-    local interval_sec
-    interval_sec=$(echo "2 * ${adjusted_refresh_time} / ${num_keys}" | bc -l)
+	# Calculate interval like original script
+	local interval_sec
+	interval_sec=$(echo "2 * ${adjusted_refresh_time} / ${num_keys}" | bc -l)
 
-    echo "${interval_sec}"
+	echo "${interval_sec}"
 }
 
 # Function to get the user's home directory
@@ -242,7 +245,7 @@ _get_user_home_dir() {
 	local _passwd_entry
 	local _user_home_dir
 
-	if [[ "${USER}" == "${_username}" ]]; then
+	if [[ ${USER} == "${_username}" ]]; then
 
 		# Requested user is also the user running the script
 		_user_home_dir="${HOME}"
@@ -265,7 +268,7 @@ _get_gpg_home_dir() {
 	local _gpg_home_dir
 
 	# Environment variable GPGHOME has alread been set elsewhere
-	if  [[ -n ${GPGHOME-} ]]; then
+	if [[ -n ${GPGHOME-} ]]; then
 		_gpg_home_dir="${GPGHOME}"
 	else
 
@@ -280,10 +283,10 @@ _get_gpg_home_dir() {
 _getRandom() {
 	local random_output
 	random_output=$(od -vAn -N4 -tu4 </dev/urandom) || {
-        echo "Error: Failed to read from /dev/urandom" >&2
-        return 1
-    }
-    echo "${random_output}" | keepDigitsOnly
+		echo "Error: Failed to read from /dev/urandom" >&2
+		return 1
+	}
+	echo "${random_output}" | keepDigitsOnly
 }
 
 # Function to run GnuPG without torsocks (for local operations only)
@@ -467,7 +470,7 @@ refreshKey() {
 	# Check if we should try WKD first
 	if [[ -z ${dirmngrPath} ]]; then
 		echo "parcimonie: WKD skipped - dirmngr not available"
-	elif [[ ${preferWkd} != "true" ]]; then
+	elif [[ ${PREFER_WKD} != "true" ]]; then
 		echo "parcimonie: Web Key Directory disabled in configuration"
 	else
 		# shellcheck disable=SC2310
@@ -510,49 +513,48 @@ keepDigitsOnly() {
 	sedExtRegexp -e 's/[^[:digit:]]//g' -e '/^$/d'
 }
 
-
 # Function to re-configure the systemd timer with a new random interval
 reconfigure_timer() {
-    local user_home="${HOME}"
-    local timer_file="${user_home}/.config/systemd/user/parcimonie.timer"
+	local user_home="${HOME}"
+	local timer_file="${user_home}/.config/systemd/user/parcimonie.timer"
 
-    # Calculate new interval (using the original algorithm)
-    local num_keys
-    num_keys=$(_get_num_keys)
+	# Calculate new interval (using the original algorithm)
+	local num_keys
+	num_keys=$(_get_num_keys)
 
-    local scaled_refresh_time=${TARGET_REFRESH_TIME}
-    if [[ "${COMPUTER_ONLINE_FRACTION:-1.0}" != "1.0" ]]; then
-        scaled_refresh_time=$(echo "${scaled_refresh_time} * ${COMPUTER_ONLINE_FRACTION}" | bc -l)
-    fi
+	local scaled_refresh_time=${TARGET_REFRESH_TIME}
+	if [[ ${COMPUTER_ONLINE_FRACTION:-1.0} != "1.0" ]]; then
+		scaled_refresh_time=$(echo "${scaled_refresh_time} * ${COMPUTER_ONLINE_FRACTION}" | bc -l)
+	fi
 
-    local base_interval_sec
-    if [[ $((2 * scaled_refresh_time)) -le ${num_keys} ]]; then
-        base_interval_sec=${MIN_WAIT_TIME}
-    else
-        base_interval_sec=$((2 * scaled_refresh_time / num_keys))
-    fi
+	local base_interval_sec
+	if [[ $((2 * scaled_refresh_time)) -le ${num_keys} ]]; then
+		base_interval_sec=${MIN_WAIT_TIME}
+	else
+		base_interval_sec=$((2 * scaled_refresh_time / num_keys))
+	fi
 
-    # Convert to systemd time format (seconds to hours/minutes)
-    local interval_hours=$((base_interval_sec / 3600))
-    local interval_minutes=$(((base_interval_sec % 3600) / 60))
-    local remaining_seconds=$((base_interval_sec % 60))
+	# Convert to systemd time format (seconds to hours/minutes)
+	local interval_hours=$((base_interval_sec / 3600))
+	local interval_minutes=$(((base_interval_sec % 3600) / 60))
+	local remaining_seconds=$((base_interval_sec % 60))
 
-    # Format as systemd time spec
-    local systemd_interval=""
-    if [[ ${interval_hours} -gt 0 ]]; then
-        systemd_interval="${interval_hours}h"
-    fi
-    if [[ ${interval_minutes} -gt 0 ]]; then
-        systemd_interval="${systemd_interval}${interval_minutes}min"
-    fi
-    if [[ ${remaining_seconds} -gt 0 ]] || [[ -z "${systemd_interval}" ]]; then
-        systemd_interval="${systemd_interval}${remaining_seconds}s"
-    fi
+	# Format as systemd time spec
+	local systemd_interval=""
+	if [[ ${interval_hours} -gt 0 ]]; then
+		systemd_interval="${interval_hours}h"
+	fi
+	if [[ ${interval_minutes} -gt 0 ]]; then
+		systemd_interval="${systemd_interval}${interval_minutes}min"
+	fi
+	if [[ ${remaining_seconds} -gt 0 ]] || [[ -z ${systemd_interval} ]]; then
+		systemd_interval="${systemd_interval}${remaining_seconds}s"
+	fi
 
-    echo "parcimonie: Reconfiguring timer for next run in ~${systemd_interval}"
+	echo "parcimonie: Reconfiguring timer for next run in ~${systemd_interval}"
 
-    # Update timer file
-    tee "${timer_file}" >/dev/null <<EOF
+	# Update timer file
+	tee "${timer_file}" >/dev/null <<EOF
 [Unit]
 Description=parcimonie key refresh timer
 Requires=parcimonie.service
@@ -568,15 +570,15 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
-    # Reload systemd configuration
-    systemctl --user daemon-reload
+	# Reload systemd configuration
+	systemctl --user daemon-reload
 
 	# Get the actual next scheduled time from systemd
 	local next_run
 	systemctl_timer_status="$(systemctl --user status parcimonie.timer)"
 	sysctemtl_timer_trigger="$(echo "${systemctl_timer_status}" | grep 'Trigger:')"
 	next_refresh=${sysctemtl_timer_trigger##*Trigger: }
-	if [[ -n "${next_run}" && "${next_run}" != "n/a n/a" ]]; then
+	if [[ -n ${next_run} && ${next_run} != "n/a n/a" ]]; then
 		echo "parcimonie: Timer reconfigured. Next refresh scheduled for: ${next_refresh}"
 	else
 		echo "parcimonie: Timer reconfigured. Next refresh in approximately ${systemd_interval}"
