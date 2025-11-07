@@ -22,11 +22,39 @@ shopt -s inherit_errexit
 # Configuration Settings
 # ---------------------------------------------------------
 
-# Source configuration file if set
-if [[ -n ${PARCIMONIE_CONF-} ]]; then
-	# shellcheck source=pkg/sample-configuration.conf.sample
-	source "${PARCIMONIE_CONF}" || printf "Failed to read configuration file (%s).\n", "${PARCIMONIE_CONF}" >&2
-	exit 1
+# -------------------------------------
+# Search for configuration file
+# shellcheck source=pkg/sample-configuration.conf.sample
+# -------------------------------------
+
+# Set by environment variable
+if [[ -n ${PARCIMONIE_CONF-} ]];  then
+	if [[ -r "${PARCIMONIE_CONF}" ]]; then
+		source "${PARCIMONIE_CONF}"
+	fi
+
+# Script directory
+elif [[ -r "$(dirname "$0")/parcimonie.conf" ]]; then
+	source "$(dirname "$0")/parcimonie.conf"
+
+# XDG base configuration directory
+elif [[ -n ${XDG_CONFIG_HOME-} ]]; then
+	if [[ -r "${XDG_CONFIG_HOME}/parcimonie.conf"  ]]; then
+		source "${XDG_CONFIG_HOME}/parcimonie.conf"
+	fi
+
+# ~/.config directory
+elif [[ -n ${HOME-} ]]; then
+	if [[ -r "${HOME}/.config/parcimonie.conf"  ]]; then
+		source "${HOME}/.config/parcimonie.conf"
+	fi
+
+# Home directory dotfile
+elif [[ -n ${HOME-} ]]; then
+	if [[ -r "${HOME}/.parcimonie.conf" ]]; then
+
+		source "${HOME}/.parcimonie.conf"
+	fi
 fi
 
 # Default Values
@@ -104,29 +132,35 @@ if [[ -z "${INVOCATION_ID+}" ]]; then
 	exit 1
 fi
 
-# Check if we have GnuPG home directory
-gnupgHomeDir="$(getGnupgHomeDir "${USER}")"
-if [[ ! -d ${gnupgHomeDir} ]]; then
-	echo "parcimonie: No GPG directory found at ${gnupgHomedir}; Exiting."
-	exit 0
+# Check if user has a GnuPG home directory
+if [[ -z ${GPGHOME-} ]]; then
+
+	# Determine the users GnuPG home directory
+	GPGHOME="$(_get_gpg_home_dir "${USER}")"
+
+	# Check if the directory exists
+	if [[ ! -d ${GPGHOME} ]]; then
+		echo "parcimonie: GnuPG home directory '${GPGHOME}' not found; Exiting."
+		exit 0
+	fi
 fi
 
 # Check for required programs
-for cmd in "${GPG_CMD}" ${DIRMNGR_CMD} ${DIRMNGR_CLIENT_CMD} "${TORSOCKS_CMD}"; do
-	if [[ ! -x ${cmd} ]]; then
-		echo "Error: Required program '${cmd}' not found or is not executable."
+for _cmd in "${GPG_CMD}" ${DIRMNGR_CMD} ${DIRMNGR_CLIENT_CMD} "${TORSOCKS_CMD}"; do
+	if [[ ! -x ${_cmd} ]]; then
+		echo "Error: Required program '${_cmd}' not found or is not executable."
 		exit 1
 	fi
 done
 
 # Test for GNU `sed`, or use a `sed` fallback in sedExtRegexp
-sedExec=(sed)
+_sed_exec=(sed)
 if [[ "$(echo 'abc' | sed -r 's/abc/def/' 2>/dev/null || true)" == 'def' ]]; then
 	# GNU Linux sed
-	sedExec+=(-r)
+	_sed_exec+=(-r)
 else
 	# Mac OS X sed
-	sedExec+=(-E)
+	_sed_exec+=(-E)
 fi
 
 # Prepare GnuPG command with command-line options
@@ -139,17 +173,17 @@ if [[ -n ${GPG_KEYSERVER_OPTIONS} ]]; then
 fi
 
 # Check how many keys we have to manage
-numKeys=$(getNumKeys)
-if [[ ${numKeys} -eq 0 ]]; then
+_num_keys=$(_get_num_keys)
+if [[ ${_num_keys} -eq 0 ]]; then
 	echo 'parcimonie: Keyring has no keys to refresh; Exiting'
 	exit 0
 else
-	echo "parcimonie: Found ${numKeys} OpenPGP key(s) to manage."
+	echo "parcimonie: Found ${_num_keys} OpenPGP key(s) to manage."
 fi
 
 # Validate _COMPUTER_ONLINE_FRACTION
-awk_result="$(echo "${_COMPUTER_ONLINE_FRACTION}" | awk '{ print ($1 < 0.1 || $1 > 1.0) ? "bad" : "good" }')"
-if [[ ${awk_result} == 'bad' ]]; then
+_awk_result="$(echo "${COMPUTER_ONLINE_FRACTION}" | awk '{ print ($1 < 0.1 || $1 > 1.0) ? "bad" : "good" }')"
+if [[ ${_awk_result} == 'bad' ]]; then
 	echo '_COMPUTER_ONLINE_FRACTION must be between 0.1 and 1.0.' >&2
 	exit 1
 fi
@@ -160,19 +194,19 @@ fi
 # ---------------------------------------------------------
 
 # Select a random key to refresh
-keyToRefresh="$(getRandomKey)"
-keyID="${keyToRefresh: -16}"
+_key_to_refresh="$(getRandomKey)"
+_key_id="${_key_to_refresh: -16}"
 
 # Refresh the selected key
-printf "parcimonie: + Refreshing key %s ...\n" "${keyID}"
-refreshKey "${keyToRefresh}"
+printf "parcimonie: + Refreshing key %s ...\n" "${_key_id}"
+_refreshKey "${_key_to_refresh}"
 
 # Check if we are running as systemd service
 if [[ -n "${INVOCATION_ID-}" ]]; then
 
 	# We are running as a systemd service - reconfigure the timer
 	echo "parcimonie: Reconfiguring systemd timer ..."
-	reconfigure_timer
+	_reconfigure_timer
 fi
 
 echo "parcimonie: + Key refresh completed. Exiting."

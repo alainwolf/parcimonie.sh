@@ -126,7 +126,11 @@ case "${1-}" in
 	# No arguments provided - offer to install for current user
 	# trunk-ignore(shellcheck/SC2310)
 	if confirm_installation; then
-		install_current_user
+		install_user_service "${calling_user}"
+		install_user_timer "${calling_user}"
+		echo "Don't forget to enable and start the timer:"
+		echo "  systemctl --user enable parcimonie.timer"
+		echo "  systemctl --user start parcimonie.timer"
 	fi
 	;;
 --help | *)
