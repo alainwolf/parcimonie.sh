@@ -3,22 +3,8 @@
 # parcimonie-ng - functions library
 # ******************************************************************************
 
-# Function to install service for a "normal" interactive user
-install_user_service() {
-	local user="$1"
-	local user_home
-	local timeToWait
-	getent=$(getent passwd "${user}")
-	user_home="$(echo "${getent}" | cut -d: -f6)"
-	timeToWait=$(getTimeToWait)
-	echo "Installing user service for ${user}"
-
-	# Create user service directory
-	sudo -u "${user}" mkdir -p "${user_home}/.config/systemd/user"
-
-	# Install service file
-	sudo -u "${user}" tee "${user_home}/.config/systemd/user/parcimonie.service" >/dev/null <<EOF
-[Unit]
+# Service unit file contents
+_systemd_service_content="[Unit]
 Description=parcimonie key refresher
 After=network.target
 
@@ -29,18 +15,87 @@ ExecStartPre=/bin/sleep ${timeToWait}
 
 [Install]
 WantedBy=default.target
-EOF
+"
 
-	# Enable service (starts on login)
-	sudo -u "${user}" systemctl --user enable parcimonie.service
-	echo "User service installed and enabled for ${user}."
+_systemd_timer_content="[Unit]
+Description=parcimonie key refresh timer
+Requires=parcimonie.service
+
+[Timer]
+# Note: Timings well be re-calculated and updated by parcimonie.sh on each run
+OnBootSec=${minWaitTime:?}
+RandomizedDelaySec=${minWaitTime}
+OnUnitActiveSec=1h0min
+DeferReactivation=true
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"
+
+# Function to install service for a "normal" interactive user
+_install_user_service() {
+	local _user_name="$1"
+	local _user_home
+	local _service_dir
+	local _time_to_wait
+
+	_time_to_wait=$(_get_time_to_wait)
+
+	echo "Installing user service for ${_user_name}"
+
+	if [[ ${USER} == "${_user_name}" ]]; then
+
+		_service_dir="${HOME}/.config/systemd/user"
+
+		# Create user service directory, if it does not exist
+		mkdir -p "${_service_dir}"
+
+		# Create the systemd unit files for the service
+		echo "${_systemd_service_content}" > "${_service_dir}/parcimonie.service"
+		echo "${_systemd_timer_content}"   > "${_service_dir}/parcimonie.timer"
+
+		# Reload systemd user configuration
+		systemctl --user daemon-reload
+
+		# Enable service and start timer
+		systemctl --user enable parcimonie.service parcimonie.timer
+		systemctl --user enable -now parcimonie.timer
+
+		echo "parcimonie service installed and enabled."
+
+	else
+
+		_user_home=$(_get_user_home_dir "${_user_name}")
+		_service_dir="${_user_home}/.config/systemd/user"
+
+		# Create user service directory, if it does not exist
+		sudo -u "${_user_name}" mkdir -p "${_user_home}/.config/systemd/user"
+
+		# Create the systemd unit file for the service
+		echo "${_systemd_service_content}" | sudo - u "${_user_name}" tee "${_service_dir}/parcimonie.service" >/dev/null
+		echo "${_systemd_timer_content}"   | sudo - u "${_user_name}" tee "${_service_dir}/parcimonie.timer" >/dev/null
+
+		# Reload systemd user configuration
+		sudo -u "${_user_name}" systemctl --user daemon-reload
+
+		# Enable service ans start timer
+		sudo -u "${_user_name}" systemctl --user enable parcimonie.service
+		sudo -u "${_user_name}" systemctl --user enable --now parcimonie.timer
+
+		# Start the timer
+		sudo -u "${_user_name}" systemctl --user start parcimonie.timer
+		echo "User service installed and started for ${_user_name}."
+
+	fi
+
 }
 
 # Function to install service for a system-user (daemon or service account)
-install_system_service() {
+_install_system_service() {
 	local user="$1"
 	local timeToWait
-	timeToWait=$(getTimeToWait)
+	timeToWait=$(_get_time_to_wait)
 	echo "Installing system service for user ${user}"
 
 	# Create system service
@@ -66,7 +121,7 @@ EOF
 }
 
 # Function to install user timer
-install_user_timer() {
+_install_user_timer() {
 	local user="$1"
 	local user_home
 	getent=$(getent passwd "${user}")
@@ -96,7 +151,7 @@ EOF
 }
 
 # Function to prompt for confirmation
-confirm_installation() {
+_confirm_install() {
 	echo "${userIinstallHelpText}"
 	echo ""
 	read -p "Do you want to proceed with the service installation? [y/N]: " -r
@@ -109,13 +164,19 @@ confirm_installation() {
 	fi
 }
 
-# Function to estimate user online fraction
-estimate_user_activity() {
+# Function to calculate online fraction of the user
+_estimate_user_activity() {
     local user="$1"
-
-    # Get actual session durations from 'last' command
     local average_session_hours
-    average_session_hours=$(last "${user}" | head -20 | awk '
+    local last_data
+    local online_fraction
+
+    # Get user session durations
+    last_data="$(last --nohostname "${user}")"
+    # last_data="$(echo "${last_data}" | head -20)"
+
+    # Calculate average session duration (in seconds)
+    average_session_time=$(echo "${last_data}" | awk '
     BEGIN { total = 0; count = 0 }
     # Only process completed sessions
     /logged in/ && !/still logged in/ {
@@ -123,14 +184,14 @@ estimate_user_activity() {
             days = duration[1]
             hours = duration[2]
             minutes = duration[3]
-            total_time = (days * 24) + hours + (minutes / 60)
+            total_time = (days * 24 * 60 * 60) + hours + (minutes * 60)
             total += total_time
             count++
         }
         else if (match($0, /\(([0-9]+):([0-9]+)\)/, duration)) {
             hours = duration[1]
             minutes = duration[2]
-            total_time = hours + (minutes / 60)
+            total_time = hours + (minutes * 60)
             total += total_time
             count++
         }
@@ -138,13 +199,10 @@ estimate_user_activity() {
     END {
         if (count > 0)
             print total / count
-        else
-            print 8  # Default fallback
     }')
 
     # Simple heuristic: if average session > 12 hours, assume high availability
     # if average session < 4 hours, assume low availability
-    local online_fraction
     if (( $(echo "${average_session_hours} >= 12" | bc -l) )); then
         online_fraction="0.8"  # High availability
     elif (( $(echo "${average_session_hours} >= 8" | bc -l) )); then
@@ -159,7 +217,7 @@ estimate_user_activity() {
 }
 
 # Use in your timer calculation
-calculate_user_timer_interval() {
+_calculate_user_timer_interval() {
     local user="$1"
     local num_keys="$2"
 
@@ -180,37 +238,46 @@ calculate_user_timer_interval() {
 
 # Function to get the user's home directory
 _get_user_home_dir() {
-	local username="${1}"
-	local passwd_entry
-	if [[ -z ${username} ]]; then
-		username="$(id -un)"
+	local _username="${1}"
+	local _passwd_entry
+	local _user_home_dir
+
+	if [[ "${USER}" == "${_username}" ]]; then
+
+		# Requested user is also the user running the script
+		_user_home_dir="${HOME}"
+	else
+
+		# Requested for another user, then the one running the script
+		# Read from /etc/passwd
+		_passwd_entry=$(getent passwd "${_username}")
+
+		# Extract home directory from passwd entry
+		_user_home="$(echo "${_passwd_entry}" | cut -d: -f6)"
 	fi
-	if [[ -z ${HOME} ]]; then
-		passwd_entry=$(getent passwd "${username}")
-		HOME="$(echo "${passwd_entry}" | cut -d: -f6)"
-	fi
-	echo "${HOME}"
+	echo "${_user_home}"
 }
 
-# Function to get the user's GnuPG home directory
-getGnupgHomeDir() {
-	local username="${1}"
-	local user_home
-	if [[ -z ${gnupgHomedir} ]] && [[ -z ${GNUPGHOME+x} ]]; then
-		if [[ -z ${username} ]]; then
-			username="$(id -un)"
-		fi
-		user_home=$(getUserHomeDir "${username}")
-		gnupgHomedir="${user_home}/.gnupg"
-		GNUPGHOME="${gnupgHomedir}"
-	elif [[ -n ${GNUPGHOME} ]]; then
-		gnupgHomedir="${GNUPGHOME}"
+# Function to get the GnuPG home directory
+_get_gpg_home_dir() {
+	local _username="$1"
+	local _user_home_dir
+	local _gpg_home_dir
+
+	# Environment variable GPGHOME has alread been set elsewhere
+	if  [[ -n ${GPGHOME-} ]]; then
+		_gpg_home_dir="${GPGHOME}"
+	else
+
+		# Get the users home directory
+		_user_home_dir="$(_get_user_home_dir "${_username}")"
+		_gpg_home_dir="${_user_home_dir}/.gnupg"
 	fi
-	echo "${gnupgHomedir}"
+	echo "${_gpg_home_dir}"
 }
 
 # Function to get a random unsigned integer
-getRandom() {
+_getRandom() {
 	local random_output
 	random_output=$(od -vAn -N4 -tu4 </dev/urandom) || {
         echo "Error: Failed to read from /dev/urandom" >&2
@@ -220,13 +287,13 @@ getRandom() {
 }
 
 # Function to run GnuPG without torsocks (for local operations only)
-nontor_gnupg() {
+_nontor_gnupg() {
 	"${GPG_CMD[@]}" "$@"
 	return "$?"
 }
 
 # Function to run GnuPG via torsocks (use for all network operations)
-tor_gnupg() {
+_tor_gnupg() {
 	"${TORSOCKS_CMD}" --isolate "${GPG_CMD[@]}" "$@"
 }
 
@@ -412,13 +479,13 @@ refreshKey() {
 }
 
 # Function to get number of keys in keyring
-getNumKeys() {
+_get_num_keys() {
 	local publicKeys
 	# shellcheck disable=SC2310
 	publicKeys=$(getPublicKeys) || return $?
-	local numKeys
-	numKeys=$(echo "${publicKeys}" | wc -l)
-	echo "${numKeys}" | keepDigitsOnly
+	local _num_keys
+	_num_keys=$(echo "${publicKeys}" | wc -l)
+	echo "${_num_keys}" | keepDigitsOnly
 }
 
 # Function to select random key from the keyring
@@ -435,7 +502,7 @@ getRandomKey() {
 
 # Function to run sed with extended regex support
 sedExtRegexp() {
-	"${sedExec[@]}" "$@"
+	"${_sed_exec[@]}" "$@"
 }
 
 # Function to keep digits only from input
@@ -451,7 +518,7 @@ reconfigure_timer() {
 
     # Calculate new interval (using the original algorithm)
     local num_keys
-    num_keys=$(getNumKeys)
+    num_keys=$(_get_num_keys)
 
     local scaled_refresh_time=${TARGET_REFRESH_TIME}
     if [[ "${COMPUTER_ONLINE_FRACTION:-1.0}" != "1.0" ]]; then
